@@ -26,7 +26,7 @@ $ make
 ```
 
 ### Using
-Create a new wallet with. Note that the seed isn't a BIP39 seed, more like a brain wallet.
+Create a new wallet with: (Note that the seed isn't a BIP39 seed, more like a brain wallet)
 ```
 $ ./main create-wallet -s <seed>
 ```

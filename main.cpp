@@ -67,7 +67,6 @@ static size_t WriteCallback(void *contents, size_t size, size_t nmemb, void *use
 static void callRPC(std::string& readBuffer, const char *data) {
   CURL *curl;
   CURLcode res;
-  //std::string readBuffer;
   struct curl_slist *headers = NULL;
   headers = curl_slist_append(headers, "Content-Type: application/json");
   curl = curl_easy_init();
@@ -83,7 +82,7 @@ static void callRPC(std::string& readBuffer, const char *data) {
   }
 } 
 /** Get the transactions of a block
- * Note to myself: Take extra care for theese roots, never loose the reference and ALWAYS free it
+ * Note to myself: Take extra care with theese roots, never loose the reference and ALWAYS free it
  * by using the json_object_put. If not used carefully, may cause serious problems
  */
 int getBlock(std::vector <std::string>& tx_list, int blk) {
@@ -180,7 +179,7 @@ void ripmd160 (char unsigned out[20], const unsigned char *data, size_t len) {
   EVP_DigestFinal_ex(mdctx, out, &md_len);
   EVP_MD_CTX_free(mdctx);
 }
-/** Compute the HASH160 (i.e the RIPMD(SHA256())) of some data */
+/** Compute the sha256 of some data */
 void sha512(unsigned char out[64], unsigned char data[32], unsigned int len) {
   EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
   const EVP_MD *md = EVP_sha512();

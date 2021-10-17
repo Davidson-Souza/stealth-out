@@ -482,6 +482,9 @@ void showUsage() {
   puts(" list-transactions             List all transactions to one wallet");
   puts(" rescan                        Rescan the blockchain looking for wallet's txs");
   puts("   -c <rpc_connection>         The params used for comunicating with Bitcoin Core");
+  puts(" spend:                        Return the private key for spending some coin");
+  puts("   -t <tx_id>                  The id of a transaction");
+
 }
 /** Parse the args from the command line */
 CMD parseArgs(int argc, char **argv, struct args_t& args) {

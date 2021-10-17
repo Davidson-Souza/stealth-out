@@ -13,12 +13,16 @@
 #define REGTEST 1
 /* We need a port for our RPC **/
 #if REGTEST
+  #define HRP "bcrt"
   #define PORT 18443
 #elif TESTNET
-  #define PORT 8332
+  #define HRP "tb"
+  #define PORT 18332
 #elif SIGNET
-  #define PORT 83332
+  #define HRP "tb"
+  #define PORT 38332
 #else 
+  #define HRP "bc"
   #define PORT 8332
 #endif
 
@@ -202,6 +206,7 @@ void hash160 (unsigned char out[20], const unsigned char *data, size_t len) {
 int isForMe
   (
     secp256k1_context *ctx,
+    unsigned char dh_out[32],
     const unsigned char priv_view_key[32],
     const secp256k1_pubkey recveer_pubkey,
     const secp256k1_pubkey pk,
@@ -213,7 +218,7 @@ int isForMe
   /** dh_out = Pa (ECDH)*/
   if (!ctx || !priv_view_key) return 0;
 
-  unsigned char dh_out[32];
+  //unsigned char dh_out[32];
   int ret = secp256k1_ecdh(ctx, dh_out, &pk, priv_view_key, secp256k1_ecdh_hash_function_default, NULL);
   secp256k1_pubkey S, P;
 
@@ -271,7 +276,7 @@ int createInvoice
     return 1;
   }
 
-/** Scrable the transaction with `txId` and get the pubkeys and the spk hashes
+/** Sweep the transaction with `txId` and get the pubkeys and the spk hashes
  * @param pks: A vector of strings, will return all public keys from the inputs
  * @param commitments: These are the hashes found inside the scriptPubKey, e.g. in v0-witness p2wpkh is the hash160 of the pk 
  * @param txid: A string containing the id of a given transaction.
@@ -353,8 +358,10 @@ int getChainSize () {
   }
   return 0;
 }
+
 int verifyTransaction(
                         secp256k1_context *ctx,
+                        unsigned char dh_out[32],
                         std::vector <std::string> pks,
                         std::vector <std::string> commitmens,
                         secp256k1_pubkey& B,
@@ -370,7 +377,7 @@ int verifyTransaction(
           printf("Error!\n");
           exit(1);
       }
-      if (isForMe (ctx, a, B, sender_pubkey, com) == 1) {
+      if (isForMe (ctx,dh_out, a, B, sender_pubkey, com) == 1) {
         return 1;
       }
     }
@@ -378,20 +385,22 @@ int verifyTransaction(
   return 0;
 }
 /** Iterates throught the chain, looking for incoming transactions */
-int scan(secp256k1_pubkey& B, const unsigned char a[32], unsigned char *rpc) {
+int scan(secp256k1_pubkey& B, const unsigned char a[32], char *rpc) {
   secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
-  FILE *wallet_txs = fopen("wallet.db", "wa");
+  FILE *wallet_txs = fopen("wallet.db", "wb");
   char cookie[100];
 
   /** @todo: Password*/
-  if (rpc == nullptr) {
+  if (strlen(rpc) == 0) {
+    puts("LOG: No RPC string informed, trying read the cookie");
     getCookie(1, cookie);
     sprintf(url, "http://%s@127.0.0.1:%d", cookie, PORT);
+  } else {
+    strcpy(url, rpc);
   }
-  
   const unsigned int tip = getChainSize();
   printf ("LOG: Scanning from 0 to %d\n", tip);
-
+  unsigned char dh_out[32];
   std::vector <std::string> pks, tx_list, commitmens;
 
   for (unsigned int block = 0; block <= tip; block++) {
@@ -406,10 +415,10 @@ int scan(secp256k1_pubkey& B, const unsigned char a[32], unsigned char *rpc) {
     for (auto i : tx_list) {
       pks.clear(); commitmens.clear();
       getTransaction(pks, commitmens, i);
-      if (verifyTransaction(ctx, pks, commitmens, B, a)) {
+      if (verifyTransaction(ctx, dh_out, pks, commitmens, B, a)) {
         printf("New wallet tx %s\n", i.c_str());
-        fprintf(wallet_txs, "%s\n", i.c_str());
-
+        fwrite(i.data() + 1, 1, 64 , wallet_txs); // This +1 strips off the double quotes
+        fwrite(dh_out, 1, 32, wallet_txs);
       }
     }
   }
@@ -417,7 +426,7 @@ int scan(secp256k1_pubkey& B, const unsigned char a[32], unsigned char *rpc) {
   secp256k1_context_destroy(ctx);
   return 0;
 }
-/** Get a p2wpkh (todo) address from a stealth address */
+/** Get a p2wpkh address from a stealth address */
 int getAddress(secp256k1_pubkey& A, secp256k1_pubkey& B, const unsigned char *r) {
   secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);  
   secp256k1_pubkey invoice, sender_pubkey;
@@ -430,11 +439,12 @@ int getAddress(secp256k1_pubkey& A, secp256k1_pubkey& B, const unsigned char *r)
   size_t ser_size = 33;
   secp256k1_ec_pubkey_serialize(ctx, ser_invoice, &ser_size, &invoice, SECP256K1_EC_COMPRESSED);
   unsigned char hash[20];
-  char address[73+2];
-
+  char address[73 + strlen(HRP)]; // This is allowed since HRP is know at compile time
+  /**... get the witness v0 address... */
   hash160(hash, ser_invoice, 33);
-  segwit_addr_encode (address, "bcrt", 0, hash, 20);
-  /** ...and display! */
+  segwit_addr_encode (address, HRP, 0, hash, 20);
+
+  /** ...and show! */
   printf ("%s\n", address);
 
   secp256k1_context_destroy(ctx);
@@ -457,9 +467,10 @@ struct args_t {
   char privKey[64] = {0};
   char seed[100] = {0};
   char rpc[1000] = {0};
+  char tx_id[64] = {0};
 };
 /** Possible commands, just only at once */
-enum class CMD {UNDEFINED, GET_INVOICE, REESCAN, LIST_ADDRESS, LIST_TRANSACTIONS, CREATE_WALLET};
+enum class CMD {UNDEFINED, GET_INVOICE, REESCAN, LIST_ADDRESS, LIST_TRANSACTIONS, CREATE_WALLET, PRIVATE_KEY};
 /** Show a cli help of all our commands */
 void showUsage() {
   puts("Usage: stealth-out command [optins]");
@@ -488,6 +499,8 @@ CMD parseArgs(int argc, char **argv, struct args_t& args) {
     cmd = CMD::LIST_TRANSACTIONS;
   else if (!strcmp (argv[1], "rescan"))
     cmd = CMD::REESCAN;
+  else if (!strcmp (argv[1], "spend"))
+    cmd = CMD::PRIVATE_KEY;
   else {
     printf("ERROR: Unknow command %s\n\n", argv[1]);
 
@@ -497,6 +510,34 @@ CMD parseArgs(int argc, char **argv, struct args_t& args) {
   for (unsigned int i = 2; i < argc; i++) {
       switch (argv[i][1])
       {
+        case 'r': {
+          if (argc - i - 1 == 0 || strlen(argv[++i]) < 1) {
+            puts("ERROR: Insuficiente params, missing a rpc address\n\n");
+
+            showUsage();
+            return CMD::UNDEFINED;
+          }
+          if (strlen(argv[i]) > 100) {
+            puts ("ERROR: RPC string too big");
+            return CMD::UNDEFINED;
+          }
+          memcpy(args.rpc, argv[i], strlen(argv[i]));
+          break;
+        }
+        case 't': {
+          if (argc - i - 1 == 0 || strlen(argv[++i]) < 1) {
+            puts("ERROR: Insuficiente params, missing a  tx\n\n");
+
+            showUsage();
+            return CMD::UNDEFINED;
+          }
+          if (strlen(argv[i]) < 64) {
+            puts ("ERROR: tx id too short");
+            return CMD::UNDEFINED;
+          }
+          memcpy(args.tx_id, argv[i], 64);
+          break;
+        }
         case 'a':
           if (argc - i - 1 == 0) {
             puts("ERROR: Insuficiente params, missing a stealth address\n\n");
@@ -585,12 +626,10 @@ int showWalletAddress(FILE *wallet) {
   if (   !secp256k1_ec_pubkey_serialize(ctx, serA, &out_len, &pkA, SECP256K1_EC_COMPRESSED)
       || !secp256k1_ec_pubkey_serialize(ctx, serB, &out_len, &pkB, SECP256K1_EC_COMPRESSED))
         return 1;
-  puts("============================ BEGIN STEALTH ADDRESS =============================");
   for (unsigned int i = 0; i < 33; i++)
     printf ("%02x", serA[i]);
   for (unsigned int i = 0; i < 33; i++)
     printf ("%02x", serB[i]);
-  puts("\n============================ END STEALTH ADDRESS ===============================");
   secp256k1_context_destroy(ctx);
   return 0;
 }
@@ -683,10 +722,68 @@ int main(int argc, char **argv) {
     }
     puts ("WARNING: Rescan may take a while to proccess");
 
-    scan(B, a, nullptr);
-  }
-  case CMD::LIST_TRANSACTIONS: {
+    scan(B, a, parsedArgs.rpc);
     break;
+  }
+
+  case CMD::LIST_TRANSACTIONS: {
+    FILE *wallet_transactions = fopen("wallet.db", "rb");
+    if (!wallet_transactions) { 
+      puts("ERROR: Reading wallet.dat");
+      return 1;
+    }
+    
+    while (!feof(wallet_transactions)) {
+      unsigned char tx_id[64] = {0}, tx_dh[32] = {0};
+      if (fread(tx_id, 1, 64, wallet_transactions) > 0)  {
+        fread(tx_dh, 1, 32, wallet_transactions);
+        printf ("| -> ");
+        for (unsigned int i = 0; i < 64; i++)
+          printf("%c", tx_id[i]);
+        puts("");
+      }
+    }
+    
+    break;
+  }
+  case CMD::PRIVATE_KEY: {
+    FILE *wallet_transactions = fopen("wallet.db", "rb");
+    FILE *wallet = fopen("wallet.dat", "rb");
+
+    if (!wallet_transactions || !wallet) { 
+      puts("ERROR: Reading wallet.dat");
+      return 1;
+    }
+    if (strlen((char *)parsedArgs.tx_id) == 0) {
+      puts("ERROR: A txid is required");
+      return 1;
+    }
+    
+    while (!feof(wallet_transactions)) {
+      unsigned char tx_id[64] = {0}, tx_dh[32] = {0};
+      if (fread(tx_id, 1, 64, wallet_transactions) > 0)  {
+        if (memcmp(tx_id, parsedArgs.tx_id, 64) == 0) {
+            fread(tx_dh, 1, 32, wallet_transactions);
+            unsigned char seed[32], hash[64];
+            fread(seed, 1, 32, wallet);
+            sha512(hash, seed, 32);
+   
+            unsigned char key_out_a[32], chaincode_a[32], key_out_b[32], chaincode_b[32];
+  
+            /** a */
+            derive(key_out_a, chaincode_a, hash, hash + 32);
+            secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
+
+            /** b */
+            derive(key_out_b, chaincode_b, key_out_a, chaincode_a);
+
+            if (!secp256k1_ec_privkey_tweak_add(ctx, tx_dh, key_out_b)) return 1;
+            for (unsigned int i = 0; i < 32; i++)
+              printf("%02x", tx_dh[i]);
+            puts("");
+        }
+      }
+    }
   }
   default:
     break;
